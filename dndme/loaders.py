@@ -10,21 +10,22 @@ from dndme.models import Character, Encounter, Monster
 
 class EncounterLoader:
 
-    def __init__(self, base_dir, monster_loader, count_resolver=None,
+    def __init__(self, base_dir, monster_loader, combat,
+            count_resolver=None,
             initiative_resolver=None):
         self.base_dir = base_dir
         self.monster_loader = monster_loader
+        self.combat = combat
         self.count_resolver = count_resolver
         self.initiative_resolver = initiative_resolver
 
     def get_available_encounters(self):
-        available_encounter_files = \
-                glob.glob(self.base_dir+'/*.toml')
+        available_encounter_files = glob.glob(f"{self.base_dir}/*.toml")
         encounters = [Encounter(**toml.load(open(filename, 'r')))
                 for filename in sorted(available_encounter_files)]
         return encounters
 
-    def load(self, encounter, combat=None):
+    def load(self, encounter):
         monster_groups = {}
         for key, group in encounter.groups.items():
             monster_groups[key] = self._load_group(group, monster_groups)
@@ -32,7 +33,7 @@ class EncounterLoader:
         monsters = [y for x in monster_groups.values() for y in x]
 
         self._set_origin(encounter, monsters)
-        self._add_to_combat(combat, monsters)
+        self._add_to_combat(self.combat, monsters)
 
         return monsters
 
@@ -45,6 +46,9 @@ class EncounterLoader:
         self._set_armor(group, monsters)
         self._set_alignment(group, monsters)
         self._set_race(group, monsters)
+        self._set_languages(group, monsters)
+        self._set_xp(group, monsters)
+        self._set_disposition(group, monsters)
         self._add_attributes(group, monsters)
         self._remove_attributes(group, monsters)
         return monsters
@@ -58,14 +62,27 @@ class EncounterLoader:
                     count = self.count_resolver(group['count'], group['monster'])
                 else:
                     count = roll_dice_expr(group['count'])
-            elif group['count'] in monster_groups:
-                count = len(monster_groups[group['count']])
-            elif '+' in group['count']:
-                keys = [x.strip() for x in group['count'].split('+')]
-                count = sum([len(monster_groups[x]) for x in keys
-                        if x in monster_groups])
             else:
-                raise ValueError(f"Invalid monster count: {group['count']}")
+                group_count = group['count']
+                names = {x: 0 for x in re.findall(r"(\w+)", group['count'])
+                        if not x.isdigit()}
+                for name in names:
+                    if name in monster_groups:
+                        names[name] = len(monster_groups[name])
+                    elif name == 'players':
+                        names[name] = len([x for x in
+                            self.combat.characters.values()
+                            if x.ctype == 'player'])
+                    elif name == 'sidekicks':
+                        names[name] = len([x for x in
+                            self.combat.characters.values()
+                            if x.ctype == 'sidekick'])
+                    elif name == 'party':
+                        names[name] = len(self.combat.characters)
+                    group_count = group_count.replace(name, str(names[name]))
+                if re.match(r"[^\d\s\(\)\+\-\*\/]", group_count):
+                    raise ValueError(f"Invalid monster count: {group['count']}")
+                count = max(eval(group_count), 1)
 
         return count
 
@@ -78,9 +95,21 @@ class EncounterLoader:
                 for i, name in enumerate(group['name']):
                     monsters[i].name = name
 
+        if 'alias' in group:
+            if hasattr(group['alias'], 'islower'):
+                for monster in monsters:
+                    monster.alias = group['alias']
+            else:
+                for i, alias in enumerate(group['alias']):
+                    monsters[i].alias = alias
+
         for i, monster in enumerate(monsters, 1):
             if monster.name.islower():
+                if not monster._alias:
+                    monster.alias = f"{monster.name.replace('_', ' ').title()} {i}"
                 monster.name += f"-{i:0>2}/{str(uuid.uuid4())[:4]}"
+            elif not monster._alias:
+                monster.alias = monster.name.replace('_', ' ').title()
 
     def _set_stats(self, group, monsters):
         for monster in monsters:
@@ -98,13 +127,28 @@ class EncounterLoader:
                 monster.cha = group['cha']
 
     def _set_hp(self, group, monsters):
-        for i in range(len(monsters)):
-            if 'max_hp' in group and len(group['max_hp']) == len(monsters):
-                monsters[i].max_hp = group['max_hp'][i]
-                monsters[i].cur_hp = group['max_hp'][i]
-            else:
-                monsters[i].max_hp = monsters[i]._max_hp
-                monsters[i].cur_hp = monsters[i].max_hp
+        # Are we overriding max hp?
+        if 'max_hp' in group:
+
+            # Have we got a list of max hp?
+            if hasattr(group['max_hp'], 'append') and \
+                    len(group['max_hp']) == len(monsters):
+                for i, monster in enumerate(monsters):
+                    monster.max_hp = group['max_hp'][i]
+                    monster.cur_hp = monster.max_hp
+
+            # Have we got a single int or dice expression?
+            elif hasattr(group['max_hp'], 'real') or \
+                    hasattr(group['max_hp'], 'join'):
+                for monster in monsters:
+                    monster.max_hp = group['max_hp']
+                    monster.cur_hp = monster.max_hp
+
+        # Not overriding max hp at all
+        else:
+            for monster in monsters:
+                monster.max_hp = monster._max_hp
+                monster.cur_hp = monster.max_hp
 
     def _set_armor(self, group, monsters):
         if 'armor' in group:
@@ -124,6 +168,21 @@ class EncounterLoader:
         if 'race' in group:
             for monster in monsters:
                 monster.race = group['race']
+
+    def _set_languages(self, group, monsters):
+        if 'languages' in group:
+            for monster in monsters:
+                monster.languages = group['languages']
+
+    def _set_xp(self, group, monsters):
+        if 'xp' in group:
+            for monster in monsters:
+                monster.xp = group['xp']
+
+    def _set_disposition(self, group, monsters):
+        if 'disposition' in group:
+            for monster in monsters:
+                monster.disposition = group['disposition']
 
     def _add_attributes(self, group, monsters):
         for monster in monsters:
@@ -148,8 +207,9 @@ class EncounterLoader:
             except KeyError:
                 pass
             except ValueError:
-                if hasattr(monster, attr):
-                    delattr(monster, attr)
+                for monster in monsters:
+                    if hasattr(monster, attr):
+                        delattr(monster, attr)
 
     def _set_origin(self, encounter, monsters):
         for monster in monsters:
@@ -178,8 +238,8 @@ class EncounterLoader:
 
 class MonsterLoader:
 
-    def __init__(self, base_dir):
-        self.base_dir = base_dir
+    def __init__(self):
+        pass
 
     def load(self, monster_name, count=1):
         # TODO: hey maybe make this more efficient, yeah?
@@ -200,7 +260,7 @@ class MonsterLoader:
         return monsters
 
     def get_available_monster_files(self):
-        monster_files = glob.glob(self.base_dir+'/*.toml')
+        monster_files = glob.glob('content/*/monsters/*.toml')
         return monster_files
 
     def get_available_monster_keys(self):
@@ -217,7 +277,7 @@ class PartyLoader:
     def load(self, combat):
         with open(self.filename, 'r') as fin:
             party = toml.load(fin)
-        combat.characters = \
-                {x['name']: Character(**x) for x in party.values()}
+        combat.characters.update(
+                {x['name']: Character(**x) for x in party.values()})
         return party
 

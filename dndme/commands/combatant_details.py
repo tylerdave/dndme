@@ -34,7 +34,11 @@ Examples:
         combat = self.game.combat
 
         if args:
-            target = combat.get_target(args[0])
+            target_name = args[0]
+            target = combat.get_target(target_name)
+            if not target:
+                print(f"Invalid target: {target_name}")
+                return
         else:
             if not combat.tm or not combat.tm.cur_turn:
                 print("No target specified.")
@@ -76,15 +80,15 @@ Examples:
             if t.skills:
                 self.print("<x>Skills:</x> " + \
                         ', '.join([f"{x}: {mf(y)}"
-                                for x, y in t.skills.items()]))
-            if t.immune:
-                self.print(f"<x>Immune:</x> {', '.join(t.immune)}")
-            if t.resist:
-                self.print(f"<x>Resist:</x> {', '.join(t.resist)}")
+                               for x, y in t.skills.items()]))
             if t.vulnerable:
-                self.print(f"<x>Vulnerable:</x> {', '.join(t.vulnerable)}")
+                self.print(f"<x>Vulnerable:</x> {t.vulnerable}")
+            if t.immune:
+                self.print(f"<x>Immune:</x> {t.immune}")
+            if t.resist:
+                self.print(f"<x>Resist:</x> {t.resist}")
             if t.languages:
-                self.print(f"<x>Languages:</x> {', '.join(t.languages)}")
+                self.print(f"<x>Languages:</x> {t.languages}")
 
             if t.conditions:
                 conds = ', '.join([f"{x}:{y}"
@@ -122,6 +126,14 @@ Examples:
                 self.print("<x1>Legendary Actions</x1>")
                 self.print("-----------------")
                 for a in t.legendary_actions.values():
+                    self.print(f"<x>{a['name']}</x>")
+                    self.print(a['description'].strip())
+                    print()
+
+            if t.lair_actions:
+                self.print("<x1>Lair Actions</x1>")
+                self.print("-----------------")
+                for a in t.lair_actions.values():
                     self.print(f"<x>{a['name']}</x>")
                     self.print(a['description'].strip())
                     print()

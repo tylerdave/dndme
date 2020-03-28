@@ -1,3 +1,4 @@
+import os
 import sys
 from dndme.commands import Command
 
@@ -13,5 +14,7 @@ Usage: {keyword}
 """
 
     def do_command(self, *args):
+        self.player_view.stop()
+
         print("Goodbye!")
-        sys.exit(1)
+        sys.exit(0)

@@ -1,3 +1,4 @@
+import fnmatch
 from math import floor, inf
 
 from attr import attrs, attrib
@@ -9,6 +10,16 @@ from dndme import dice
 @attrs
 class Combatant:
     name = attrib(default="")
+    _alias = attrib(default="")
+
+    @property
+    def alias(self):
+        return self._alias or self.name
+
+    @alias.setter
+    def alias(self, value):
+        self._alias = value
+
     race = attrib(default="")
     ac = attrib(default=0)
 
@@ -71,12 +82,46 @@ class Combatant:
 
         return conditions_removed
 
+    @property
+    def status(self):
+        hp_percent = self.cur_hp / self.max_hp
+        if hp_percent >= 0.9:
+            return "healthy"
+        elif hp_percent > 0.5:
+            return "injured"
+        elif hp_percent > 0.1:
+            return "bloodied"
+        elif hp_percent > 0:
+            return "critical"
+        else:
+            return "down"
+
+    @property
+    def can_cast_spells(self):
+        return hasattr(self, 'features') and \
+                'spellcasting' in self.features
+
+    @property
+    def available_spell_slots(self):
+        if not self.can_cast_spells:
+            return []
+
+        slots = self.features['spellcasting']['slots']
+        slots_used = self.features['spellcasting']['slots_used']
+        return [str(i+1) for i in range(len(slots))
+                if slots_used[i] < slots[i]]
+
 
 @attrs
 class Character(Combatant):
+    ctype = attrib(default="player")
     cclass = attrib(default="Fighter")
     level = attrib(default=1)
     initiative_mod = attrib(default=0)
+
+    visible_in_player_view = attrib(default=True)
+    disposition = attrib(default="friendly")
+
 
 @attrs
 class Monster(Combatant):
@@ -115,10 +160,14 @@ class Monster(Combatant):
     languages = attrib(default=attr_factory(list))
     features = attrib(default=attr_factory(dict))
     actions = attrib(default=attr_factory(dict))
+    lair_actions = attrib(default=attr_factory(dict))
     legendary_actions = attrib(default=attr_factory(dict))
     reactions = attrib(default=attr_factory(dict))
     notes = attrib(default="")
+
     origin = attrib(default="origin unknown")
+    visible_in_player_view = attrib(default=False)
+    disposition = attrib(default="hostile")
 
 
 @attrs
@@ -160,7 +209,15 @@ class Combat:
     def get_target(self, name):
         return self.characters.get(name) or \
                 self.monsters.get(name)
-    
+
+    def get_targets(self, names):
+        names = sorted(set([name for lst in
+                [fnmatch.filter(self.combatant_names, name) for name in names]
+                for name in lst]))
+        # I want a walrus operator here!
+        targets = [self.get_target(name) for name in names]
+        return [target for target in targets if target]
+
     @property
     def current_combatant(self):
         if self.tm and self.tm.cur_turn:
@@ -170,17 +227,24 @@ class Combat:
 
 @attrs
 class Game:
+    base_dir = attrib()
     encounters_dir = attrib()
-    monsters_dir = attrib()
     party_file = attrib()
     log_file = attrib()
+
+    calendar = attrib()
     clock = attrib()
+    almanac = attrib()
+    latitude = attrib()
 
     stash = attrib(default={})
     combats = attrib(default=[])
     combat = attrib()
 
     commands = attrib(default={})
+
+    changed = attrib(default=True)
+    player_message = attrib(default="")
 
     @combat.default
     def _combat(self):

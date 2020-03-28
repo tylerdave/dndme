@@ -66,10 +66,15 @@ Usage: {keyword} <what>
         combat = self.game.combat
         monsters = list(sorted(combat.monsters.items()))
         for name, monster in monsters:
-            print(f"{name:20}"
+            formatted_name = name
+            if monster.alias:
+                formatted_name = f"{name}:{monster.alias}"
+            vis_icon = "(+) " if monster.visible_in_player_view else "( ) "
+            print(f"{vis_icon}{formatted_name[:30]:30}"
                     f"\tHP: {monster.cur_hp:0>2}/{monster.max_hp:0>2}"
                     f"\tAC: {monster.ac:0>2}"
                     f"\tPer: {monster.senses['perception']:0>2}"
+                    f"\t{monster.disposition}"
             )
             if monster.conditions:
                 conds = ', '.join([f"{x}:{y}"
